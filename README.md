@@ -1,5 +1,5 @@
 # libpki-oqs-test
-Quick tool for building the OQS OpenSSL and LibPKI w/ Support for Post-Quantum Algorithms
+Quick & Drafty tool for building the OQS OpenSSL and LibPKI w/ Support for Post-Quantum Algorithms - this is just an internal repo that might be useful for other developers and that is the only reason we are sharing it.
 
 # Usage
 This is a quick tool we use to ease building LibPKI and OpenSSL w/ Open Quantum Safe support and an initial implementation for Composite Crypto.
