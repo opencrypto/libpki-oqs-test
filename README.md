@@ -23,3 +23,22 @@ To use it, you edit and add/remove the options that are not needed in your envir
 # Enabling Composite Crypto (Besides OQS Composite Crypto Support)
 
 In order to enable the use of Composite Crypto as a generic Algorithm OID and then use the PKEY creation to combine different Keys into your multi-key (Composite) one, you need to look into the config-n-patch/ossl_patch directory - there you will find the current skeleton for implementing the EVP_PKEY_METHOD and EVP_PKEY_ASN1_METHOD (and all pointers in different include files).
+
+Remember that to enable the support for native OSSL Composite Crypto in LibPKI (i.e., to use 'pki-tool keygen -algorithm Composite -addkey tests/ec.key -addkey tests/rsa.key -addkey tests/falcon.key'), you need to use the '--enable-composite' flag when configuring the build. For example, to enable both OQS and Composite, you can use the following:
+
+```
+$ ./configure --prefix=<PREFIX> --enable-composite --enable-oqs
+```
+
+also, remember to turn off features you do not need - for example, if you do not need LDAP integration with the URL interface, simply disable it by using the '--disable-ldap'. The same goes for your Maria DB or other URL supported interfaces.
+
+Enjoy Post-Quantum and Composite Crypto!
+
+# Acknowledgments
+
+A huge thanks goes to the Open Quantum Safe project and all its leaders, maintainers, and contributors. All this work for testing post-quantum algorithms and backward compatibility deployment options (Composite Crypto) could not be possible without the OQS.
+
+Similarly, we thank the OpenSSL project and all its contributor since SSLEay... (remember the beginnings? fun times!)
+
+Thank You! Thank You! Thank You!
+
