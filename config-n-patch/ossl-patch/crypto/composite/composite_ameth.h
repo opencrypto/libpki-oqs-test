@@ -1,3 +1,5 @@
+/* BEGIN: composite_amenth.h */
+
 // Composite Crypto authentication methods.
 // (c) 2021 by Massimiliano Pala
 
@@ -9,6 +11,10 @@
 
 #ifndef OPENSSL_COMPOSITE_ASN1_METH_H
 #define OPENSSL_COMPOSITE_ASN1_METH_H
+
+#ifdef  __cplusplus
+extern "C" {
+#endif
 
 // ===============
 // Data Structures
@@ -142,11 +148,11 @@ static int get_pub_key(const EVP_PKEY *pk, unsigned char *pub, size_t *len);
 // in OPENSSL_SRC/include/crypto/asn1.h
 
 const EVP_PKEY_ASN1_METHOD composite_asn1_meth = {
-    NID_composite,            // int pkey_id;
-    NID_composite,            // int pkey_base_id;
-    0,                        // unsigned long pkey_flags; // ASN1_PKEY_SIGPARAM_NULL
-    "composite",              // char *pem_str;
-    "Composite Crypto With Alternative Keys", // char *info;
+    EVP_PKEY_COMPOSITE,       // int pkey_id;
+    EVP_PKEY_COMPOSITE,       // int pkey_base_id;
+    ASN1_PKEY_SIGPARAM_NULL,  // unsigned long pkey_flags; // ASN1_PKEY_SIGPARAM_NULL
+    "COMPOSITE",              // char *pem_str;
+    "Composite Crypto With Combined Keys", // char *info;
     pub_decode,               // int (*pub_decode) (EVP_PKEY *pk, X509_PUBKEY *pub);
     pub_encode,               // int (*pub_encode) (X509_PUBKEY *pub, const EVP_PKEY *pk);
     pub_cmp,                  // int (*pub_cmp) (const EVP_PKEY *a, const EVP_PKEY *b);
@@ -183,6 +189,10 @@ const EVP_PKEY_ASN1_METHOD composite_asn1_meth = {
     get_pub_key,              // int (*get_pub_key) (const EVP_PKEY *pk, unsigned char *pub, size_t *len);
 };
 
+#ifdef  __cplusplus
+}
+#endif
+
 #endif // OPENSSL_COMPOSITE_AMETH_H
 
-
+/* END: composite_amenth.h */

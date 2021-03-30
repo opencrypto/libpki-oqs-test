@@ -1,3 +1,5 @@
+/* BEGIN: composite_pmenth.h */
+
 // Composite Crypto authentication methods.
 // (c) 2021 by Massimiliano Pala
 //
@@ -13,13 +15,17 @@
 #include "crypto/asn1.h"
 #include "crypto/evp.h"
 
-
 #ifndef OPENSSL_COMPOSITE_PKEY_METH_H
 #define OPENSSL_COMPOSITE_PKEY_METH_H
+
+#ifdef  __cplusplus
+extern "C" {
+#endif
 
 // ===============
 // Data Structures
 // ===============
+
 
 // ==========================
 // EVP_PKEY_METHOD Prototypes
@@ -53,20 +59,20 @@ static int sign_init(EVP_PKEY_CTX *ctx);
 
 // Implemented
 static int sign(EVP_PKEY_CTX        * ctx, 
-                               unsigned char       * sig,
-                               size_t              * siglen,
-                               const unsigned char * tbs,
-                               size_t                tbslen);
+                unsigned char       * sig,
+                size_t              * siglen,
+                const unsigned char * tbs,
+                size_t                tbslen);
 
 // Implemented
 static int verify_init(EVP_PKEY_CTX *ctx);
 
 // Implemented
 static int verify(EVP_PKEY_CTX        * ctx,
-                                 const unsigned char * sig,
-                                 size_t                siglen,
-                                 const unsigned char * tbs,
-                                 size_t                tbslen);
+                  const unsigned char * sig,
+                  size_t                siglen,
+                  const unsigned char * tbs,
+                  size_t                tbslen);
 
 // Not Implemented
 static int verify_recover_init(EVP_PKEY_CTX *ctx);
@@ -136,7 +142,6 @@ static int param_check(EVP_PKEY *pkey);
 // Implemented
 static int digest_custom(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
 
-
 // ======================
 // PKEY Method Definition
 // ======================
@@ -147,9 +152,13 @@ static int digest_custom(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
 // OPENSSL_SRC/crypto/evp/evp_locl.h (OPENSS_VERSION <= 1.1.0 or prior)
 // OPENSSL_SRC/crypto/include/internal/evp_int.h (OPENSSL_VERSION >= 1.1.X+)
 
+// NOTE: When theEVP_PKEY_FLAG_SIGCTX_CUSTOM is used, then we can
+// return a NULL as a default MD, otherwise OpenSSL will stop the
+// execution (see the do_sigver_init() at m_sigver.c:25)
+
 const EVP_PKEY_METHOD composite_pkey_meth = {
-    NID_composite,  // int pkey_id;
-    EVP_PKEY_FLAG_SIGCTX_CUSTOM, // int flags; (EVP_PKEY_FLAG_SIGCTX_CUSTOM
+    EVP_PKEY_COMPOSITE,  // int pkey_id;
+    0,  // int flags; //EVP_PKEY_FLAG_SIGCTX_CUSTOM
     init,           // int (*init)(EVP_PKEY_CTX *ctx);
     copy,           // int (*copy)(EVP_PKEY_CTX *dst, EVP_PKEY_CTX *src);
     cleanup,        // void (*cleanup)(EVP_PKEY_CTX *ctx);
@@ -186,4 +195,9 @@ const EVP_PKEY_METHOD composite_pkey_meth = {
 #endif
 };
 
+#ifdef  __cplusplus
+}
+#endif
 #endif // OPENSSL_COMPOSITE_PKEY_METH_H
+
+/* END: composite_pmenth.h */

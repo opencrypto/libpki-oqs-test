@@ -1,4 +1,4 @@
 LIBS=../../libcrypto
-SOURCE[../../libcrypto]= \
+SOURCE[../../libcrypto]=  \
         composite_ameth.c \
-	composite_pmeth.c 
+        composite_pmeth.c
