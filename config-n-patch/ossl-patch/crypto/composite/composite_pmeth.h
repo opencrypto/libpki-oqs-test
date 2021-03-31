@@ -162,36 +162,36 @@ const EVP_PKEY_METHOD composite_pkey_meth = {
     init,           // int (*init)(EVP_PKEY_CTX *ctx);
     copy,           // int (*copy)(EVP_PKEY_CTX *dst, EVP_PKEY_CTX *src);
     cleanup,        // void (*cleanup)(EVP_PKEY_CTX *ctx);
-    paramgen_init,  // int (*paramgen_init)(EVP_PKEY_CTX *ctx);
-    paramgen,       // int (*paramgen)(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey);
+    0, // paramgen_init,  // int (*paramgen_init)(EVP_PKEY_CTX *ctx);
+    0, // paramgen,       // int (*paramgen)(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey);
     keygen_init,    // int (*keygen_init)(EVP_PKEY_CTX *ctx);
     keygen,         // int (*keygen)(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey);
-    sign_init,      // int (*sign_init) (EVP_PKEY_CTX *ctx);
+    0, // sign_init,      // int (*sign_init) (EVP_PKEY_CTX *ctx);
     sign,           // int (*sign) (EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen, const unsigned char *tbs, size_t tbslen);
-    verify_init,    // int (*verify_init) (EVP_PKEY_CTX *ctx);
+    0, // verify_init,    // int (*verify_init) (EVP_PKEY_CTX *ctx);
     verify,         // int (*verify) (EVP_PKEY_CTX *ctx, const unsigned char *sig, size_t siglen, const unsigned char *tbs, size_t tbslen);
-    verify_recover_init,  // int (*verify_recover_init) (EVP_PKEY_CTX *ctx);
-    verify_recover, // int (*verify_recover) (EVP_PKEY_CTX *ctx, unsigned char *rout, size_t *routlen, const unsigned char *sig, size_t siglen);
-    signctx_init,   // int (*signctx_init) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
-    signctx,        // int (*signctx) (EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen, EVP_MD_CTX *mctx);
-    verifyctx_init, // int (*verifyctx_init) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
-    verifyctx,      // int (*verifyctx) (EVP_PKEY_CTX *ctx, const unsigned char *sig, int siglen, EVP_MD_CTX *mctx);
-    encrypt_init,   // int (*encrypt_init) (EVP_PKEY_CTX *ctx);
-    encrypt,        // int (*encrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen, const unsigned char *in, size_t inlen);
-    decrypt_init,   // int (*decrypt_init) (EVP_PKEY_CTX *ctx);
-    decrypt,        // int (*decrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen, const unsigned char *in, size_t inlen);
-    derive_init,    // int (*derive_init) (EVP_PKEY_CTX *ctx);
-    derive,         // int (*derive) (EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen);
+    0, // verify_recover_init,  // int (*verify_recover_init) (EVP_PKEY_CTX *ctx);
+    0, // verify_recover, // int (*verify_recover) (EVP_PKEY_CTX *ctx, unsigned char *rout, size_t *routlen, const unsigned char *sig, size_t siglen);
+    0, // signctx_init,   // int (*signctx_init) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
+    0, // signctx,        // int (*signctx) (EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen, EVP_MD_CTX *mctx);
+    0, // verifyctx_init, // int (*verifyctx_init) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
+    0, // verifyctx,      // int (*verifyctx) (EVP_PKEY_CTX *ctx, const unsigned char *sig, int siglen, EVP_MD_CTX *mctx);
+    0, // encrypt_init,   // int (*encrypt_init) (EVP_PKEY_CTX *ctx);
+    0, // encrypt,        // int (*encrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen, const unsigned char *in, size_t inlen);
+    0, // decrypt_init,   // int (*decrypt_init) (EVP_PKEY_CTX *ctx);
+    0, // decrypt,        // int (*decrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen, const unsigned char *in, size_t inlen);
+    0, // derive_init,    // int (*derive_init) (EVP_PKEY_CTX *ctx);
+    0, // derive,         // int (*derive) (EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen);
     ctrl,           // int (*ctrl) (EVP_PKEY_CTX *ctx, int type, int p1, void *p2);
     ctrl_str,       // int (*ctrl_str) (EVP_PKEY_CTX *ctx, const char *type, const char *value);
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L)
     // These are only available on OpenSSL v1.1.X+ //
-    digestsign,     // int (*digestsign) (EVP_MD_CTX *ctx, unsigned char *sig, size_t *siglen, const unsigned char *tbs, size_t tbslen);
-    digestverify,   // int (*digestverify) (EVP_MD_CTX *ctx, const unsigned char *sig, size_t siglen, const unsigned char *tbs, size_t tbslen);
+    0, // digestsign,     // int (*digestsign) (EVP_MD_CTX *ctx, unsigned char *sig, size_t *siglen, const unsigned char *tbs, size_t tbslen);
+    0, // digestverify,   // int (*digestverify) (EVP_MD_CTX *ctx, const unsigned char *sig, size_t siglen, const unsigned char *tbs, size_t tbslen);
     check,          // int (*check) (EVP_PKEY *pkey);
     public_check,   // int (*public_check) (EVP_PKEY *pkey);
-    param_check,    // int (*param_check) (EVP_PKEY *pkey);
-    digest_custom   // int (*digest_custom) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
+    0, // param_check,    // int (*param_check) (EVP_PKEY *pkey);
+    0, // digest_custom   // int (*digest_custom) (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
 #endif
 };
 

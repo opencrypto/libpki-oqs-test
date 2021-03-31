@@ -23,300 +23,206 @@
 // Internal Functions
 // ==================
 
-static COMPOSITE_KEY_ITEM * COMPOSITE_KEY_ITEM_new_null() {
+void COMPOSITE_CTX_ITEM_free(COMPOSITE_CTX_ITEM * it) {
+  // Frees the memory associated with a CTX item
 
-  COMPOSITE_KEY_ITEM * ret = NULL;
-    // Return Data Structure
+  if (!it) return;
 
-
-  // Allocates Memory
-  ret = OPENSSL_zalloc(sizeof(*ret));
-
-  if (!ret) return NULL;
-
-  ret->pkey_ctx = NULL;
-  ret->md_ctx   = NULL;
-  ret->pkey     = NULL;
+  // Handles the EVP_PKEY_CTX (if any)
+  if (it->pkey_ctx) EVP_PKEY_CTX_free(it->pkey_ctx);
+  // Handles the EVP_MD_CTX (if any)
+  if (it->md_ctx != NULL) EVP_MD_CTX_free(it->md_ctx);
 
   // All Done
-  return ret;
-}
-
-static void COMPOSITE_KEY_ITEM_free(COMPOSITE_KEY_ITEM *x) {
-
-  if (!x) return;
-
-  if (x->md_ctx) EVP_MD_CTX_free(x->md_ctx); // EVP_MD_meth_free()
-  x->md_ctx = NULL;
-
-  if (x->pkey_ctx) EVP_PKEY_CTX_free(x->pkey_ctx);
-  x->pkey_ctx = NULL;
-
-  if (x->pkey) EVP_PKEY_free(x->pkey);
-  x->pkey = NULL;
-
-  OPENSSL_free(x);
-
+  OPENSSL_free(it);
   return;
 }
 
-static COMPOSITE_KEY_ITEM * COMPOSITE_KEY_ITEM_new_id (int alg_nid) {
+int COMPOSITE_CTX_add(COMPOSITE_CTX * comp_ctx,
+                             EVP_PKEY_CTX  * pkey_ctx, 
+                             EVP_MD_CTX    * md_ctx,
+                             int             index) {
 
-  COMPOSITE_KEY_ITEM * ret = NULL;
-    // Return item
+  COMPOSITE_CTX_ITEM * it = NULL;
+    // Internal Structure for the CTX stack
 
-  // Input Validation
-  if (alg_nid <= NID_undef) return NULL;
+  // NOTE: pkey_ctx is needed, md_ctx is optional
+  if (!comp_ctx || !pkey_ctx) return 0;
 
-  // Allocate the return object
-  if ((ret = COMPOSITE_KEY_ITEM_new_null()) == NULL)
-    return NULL;
-
-  // Get the CTX from the NID
-  if ((ret->pkey_ctx = EVP_PKEY_CTX_new_id(alg_nid, NULL)) == NULL) {
-    DEBUG("Cannot Get a new Item's CTX");
-    goto err;
+  if ((it = COMPOSITE_CTX_ITEM_new_null()) != NULL) {
+    // Adds the component to the stack 
+    if (COMPOSITE_CTX_add_item(comp_ctx, it, index) != 0) {
+      // Transfer ownership of the PKEY ctx to the stacked item
+      it->pkey_ctx = pkey_ctx;
+      it->md_ctx = md_ctx;
+    } else {
+      DEBUG("ERROR: Cannot add key to position %d", index);
+      COMPOSITE_CTX_ITEM_free(it);
+      return 0;
+    }
+  } else {
+    DEBUG("ERROR: Cannot create new CTX item");
+    return 0;
   }
 
-  DEBUG("ITEM (%d) created successfully", alg_nid);
-
-  return ret;
-
-err:
-
-  if (ret) COMPOSITE_KEY_ITEM_free(ret);
-
-  return NULL;
+  return 1;
 }
 
-COMPOSITE_KEY * COMPOSITE_KEY_new_null() {
+int COMPOSITE_CTX_add_pkey(COMPOSITE_CTX * comp_ctx, 
+                           EVP_PKEY      * pkey,
+                           int             index) {
 
-  COMPOSITE_KEY * ret = NULL;
-    // Composite Key Container
+  EVP_PKEY_CTX * pkey_ctx = NULL;
+    // New Context container
 
-  STACK_OF(COMPOSITE_KEY_ITEM) * items = NULL;
-    // Empty Stack for Key Sequences
+  // Input Check
+  if (!comp_ctx || !pkey) return 0;
 
-  // Generates the Stack First
-  if ((items = sk_COMPOSITE_KEY_ITEM_new_null()) == NULL)
-    return NULL;
-
-  // Allocates the return memoty
-  if ((ret = OPENSSL_zalloc(sizeof(*ret))) == NULL) {
-    sk_COMPOSITE_KEY_ITEM_free(items);
-    return NULL;
+  if ((pkey_ctx = EVP_PKEY_CTX_new_id(pkey->type, NULL)) == NULL) {
+    DEBUG("ERROR: Cannot Generate a New CTX for key Type %d", pkey->type);
+    return 0;
   }
+
+  // Adds the component
+  if (!COMPOSITE_CTX_add(comp_ctx, pkey_ctx, NULL, index)) {
+    EVP_PKEY_CTX_free(pkey_ctx);
+    return 0;
+  }
+
+  // Assigns the EVP_PKEY to the CTX
+  pkey_ctx->pkey = pkey;
+
+  // Increments Refcount for the Key
+  // EVP_PKEY_up_ref(pkey);
+
+  // All Done
+  return 1;
+}
+
+int COMPOSITE_CTX_push(COMPOSITE_CTX * comp_ctx,
+                       EVP_PKEY_CTX  * pkey_ctx,
+                       EVP_MD_CTX    * md_ctx) {
+
+  // Input Check
+  if (!comp_ctx || !pkey_ctx) return 0;
+
+    // Adds the component
+  if (COMPOSITE_CTX_add(comp_ctx, pkey_ctx, md_ctx,
+                        COMPOSITE_CTX_num(comp_ctx)) == 0) {
+    EVP_PKEY_CTX_free(pkey_ctx);
+    return 0;
+  }
+
+  return 1;
+}
+
+
+int COMPOSITE_CTX_push_pkey(COMPOSITE_CTX * comp_ctx,
+                            EVP_PKEY      * pkey) {
+
+  EVP_PKEY_CTX * pkey_ctx = NULL;
+    // New Context container
+
+  // Input Check
+  if (!comp_ctx || !pkey) return 0;
+
+  // Creates a new EVP_PKEY_CTX
+  if ((pkey_ctx = EVP_PKEY_CTX_new_id(pkey->type, NULL)) == NULL) {
+    DEBUG("ERROR: Cannot Generate a New CTX for key Type %d", pkey->type);
+    return 0;
+  }
+  
+  if (!COMPOSITE_CTX_push(comp_ctx, pkey_ctx, NULL)) {
+    EVP_PKEY_CTX_free(pkey_ctx);
+    return 0;
+  }
+
+  // Assigns the EVP_PKEY to the CTX
+  pkey_ctx->pkey = pkey;
+
+  // Increments Refcount for the Key
+  // EVP_PKEY_up_ref(pkey);
+  
+  // All Done
+  return 1;
+
+}
+
+int COMPOSITE_CTX_pkey_get0(COMPOSITE_CTX  * comp_ctx,
+                            EVP_PKEY      ** pkey_ctx,
+                            int              index) {
+
+  COMPOSITE_CTX_ITEM * it = COMPOSITE_CTX_value(comp_ctx, index);
+    // Pointer to the internal structure
+    // for the CTX of individual keys
+
+  // Simple validation
+  if (!it) return 0;
+
+  if (!it->pkey_ctx || !it->pkey_ctx->pkey) return 0;
+
+  *pkey_ctx = it->pkey_ctx->pkey;
+
+  // EVP_PKEY_up_ref(it->pkey_ctx->pkey);
+
+  // All done
+  return 1;
+}
+
+int COMPOSITE_CTX_get0(COMPOSITE_CTX  * comp_ctx,
+                       int              index,
+                       EVP_PKEY_CTX  ** pkey_ctx,
+                       EVP_MD_CTX    ** md_ctx) {
+
+  COMPOSITE_CTX_ITEM * it = COMPOSITE_CTX_value(comp_ctx, index);
+    // Pointer to the internal structure
+    // for the CTX of individual keys
+
+  // Simple validation
+  if (!it) return 0;
+
+  // Copies references
+  pkey_ctx = &it->pkey_ctx;
+  md_ctx = &it->md_ctx;
+
+  // All done
+  return 1;
+}
+
+int COMPOSITE_CTX_pop(COMPOSITE_CTX * comp_ctx,
+                      EVP_PKEY_CTX  ** pkey_ctx,
+                      EVP_MD_CTX    ** md_ctx) {
+
+  COMPOSITE_CTX_ITEM * it = NULL;
+
+  int ctx_num = COMPOSITE_CTX_num(comp_ctx);
+
+  if (ctx_num <= 0) return 0;
+
+  if ((it = COMPOSITE_CTX_get_item(comp_ctx, ctx_num)) == NULL) {
+    DEBUG("ERROR: Cannot pop component CTX from composite context");
+    return 0;
+  }
+
+  // Copies the references
+  *pkey_ctx = it->pkey_ctx;
+  *md_ctx = it->md_ctx;
 
   // Transfers Ownership
-  ret->items = items;
+  it->pkey_ctx = NULL;
+  it->md_ctx = NULL;
 
-  // All Done
-  return ret;
-}
-
-void COMPOSITE_KEY_free(COMPOSITE_KEY * key) {
-
-  COMPOSITE_KEY_ITEM * it = NULL;
-    // Temp pointer for freeing resources
-
-  // Input check
-  if (!key) return;
-
-  // Free the components first
-  while ((key->items != NULL) && 
-         (it = sk_COMPOSITE_KEY_ITEM_pop(key->items)) != NULL) {
-
-    // Deallocate the memory for the object
-    COMPOSITE_KEY_ITEM_free(it);
-  }
-
-  // Deallocate memory for the main strcuture
-  OPENSSL_free(key);
-
-  // All Done
-  return;
-
-}
-
-static COMPOSITE_PKEY_CTX * COMPOSITE_PKEY_CTX_new_null() {
-
-  COMPOSITE_PKEY_CTX * ctx = NULL;
-
-  // Allocates the CTX
-  if ((ctx = OPENSSL_zalloc(sizeof(*ctx))) == NULL) {
-    return NULL;
-  }
-
-  // Allocates an empty Key
-  if (((ctx->key = COMPOSITE_KEY_new_null())) == NULL) {
-    OPENSSL_free(ctx);
-    return NULL;
-  }
-
-  // All Done
-  return ctx;
-}
-
-static void COMPOSITE_PKEY_CTX_free(COMPOSITE_PKEY_CTX * ctx) {
-
-  if (!ctx) return;
-
-  // Free the key (if present)
-  if (ctx->key != NULL) COMPOSITE_KEY_free(ctx->key);
-
-  // Free the main structure
-  OPENSSL_free(ctx);
-
-  // Safety
-  ctx = NULL;
-
-  // All Done
-  return;
-}
-
-EVP_PKEY * COMPOSITE_KEY_get0(COMPOSITE_KEY * key, int num) {
-
-  COMPOSITE_KEY_ITEM * it = NULL;
-    // Pointer for the Data Structure
-
-  if ((it = COMPOSITE_KEY_ITEM_get0(key, num)) == NULL)
-    return NULL;
+  // Free the item memory
+  COMPOSITE_CTX_ITEM_free(it);
 
   // All done
-  return it->pkey;
-}
-
-COMPOSITE_KEY_ITEM * COMPOSITE_KEY_ITEM_get0(COMPOSITE_KEY * key, int num) {
-
-  COMPOSITE_KEY_ITEM * it = NULL;
-    // Pointer for the Data Structure
-
-  // Input checks
-  if (!key || !key->items)
-    return NULL;
-
-  // Checks the range for num
-  if (num >= sk_COMPOSITE_KEY_ITEM_num(key->items))
-    return NULL;
-
-  // Gets the item
-  if ((it = sk_COMPOSITE_KEY_ITEM_value(key->items, num)) == NULL)
-    return NULL;
-
-  // All done
-  return it;
-}
-
-int COMPOSITE_KEY_add(COMPOSITE_KEY * key, EVP_PKEY * pkey, int num) {
-
-  COMPOSITE_KEY_ITEM * aItem = NULL;
-
-  // Input check
-  if (!key || !key->items || !pkey) return 0;
-
-  // Checks the range for num
-  if (num < 0 || num >= sk_COMPOSITE_KEY_ITEM_num(key->items))
-    return 0;
-
-  // Generate a new item
-  if ((aItem = COMPOSITE_KEY_ITEM_new_null()) == NULL)
-    return 0;
-
-  // Let's add the new Item to the Stack first (check error)
-  // and then assign the pkey to the item
-  if (!sk_COMPOSITE_KEY_ITEM_insert(key->items, aItem, num)) {
-    // Free Memory
-    COMPOSITE_KEY_ITEM_free(aItem);
-    return 0;
-  }
-
-  // Let's assign the pkey to the added item
-  aItem->pkey = pkey;
-
-  // All Done
   return 1;
 }
 
-int COMPOSITE_KEY_del(COMPOSITE_KEY * key, int num) {
+COMPOSITE_CTX_ITEM * COMPOSITE_CTX_ITEM_new_null() {
 
-  // COMPOSITE_KEY_ITEM * aItem = NULL;
+  return OPENSSL_zalloc(sizeof(COMPOSITE_CTX_ITEM));
 
-  if (!key || !key->items) return 0;
-
-  DEBUG("MISSING CODE: Del Key from MultiKey");
-
-  return 0;
-
-}
-
-int COMPOSITE_KEY_push(COMPOSITE_KEY * key, EVP_PKEY * pkey) {
-
-  COMPOSITE_KEY_ITEM * aItem = NULL;
-
-  if (!key || !key->items) return 0;
-
-  // Generate a new item
-  if ((aItem = COMPOSITE_KEY_ITEM_new_null()) == NULL)
-    return 0;
-
-  // Let's add the new Item to the Stack first (check error)
-  // and then assign the pkey to the item
-  if (!sk_COMPOSITE_KEY_ITEM_push(key->items, aItem)) {
-    // Free Memory
-    COMPOSITE_KEY_ITEM_free(aItem);
-    return 0;
-  }
-
-  // Let's assign the pkey to the added item
-  aItem->pkey = pkey;
-
-  // All Done
-  return 1;
-}
-
-EVP_PKEY * COMPOSITE_KEY_pop(COMPOSITE_KEY * key) {
-
-  EVP_PKEY * aKey = NULL;
-
-  COMPOSITE_KEY_ITEM * aItem = NULL;
-
-  if (!key || !key->items) return NULL;
-
-  if ((aItem = sk_COMPOSITE_KEY_ITEM_pop(key->items)) == NULL)
-    return NULL;
-
-  // Transfer Ownership
-  aKey = aItem->pkey;
-  aItem->pkey = NULL;
-
-  // Free the memory
-  COMPOSITE_KEY_ITEM_free(aItem);
-
-  // Returns the PKEY
-  return aKey;
-}
-
-int COMPOSITE_KEY_clear(COMPOSITE_KEY * key) {
-
-  EVP_PKEY * aKey = NULL;
-
-  // Input Checks
-  if (!key || !key->items) return 0;
-
-  while ((aKey = COMPOSITE_KEY_pop(key)) != NULL) {
-    // Free the Key Data Structure
-    EVP_PKEY_free(aKey);
-  }
-
-  // All Done.
-  return 1;
-}
-
-int COMPOSITE_KEY_num(COMPOSITE_KEY * key) {
-  
-  if (!key || !key->items) return -1;
-
-  return sk_COMPOSITE_KEY_ITEM_num(key->items);
 }
 
 int COMPOSITE_KEY_size(COMPOSITE_KEY * key) {
@@ -325,7 +231,7 @@ int COMPOSITE_KEY_size(COMPOSITE_KEY * key) {
   int key_num = 0;  
   int total_size = 0;
 
-  if (!key || !key->items) return -1;
+  if (!key) return -1;
 
   if ((key_num = COMPOSITE_KEY_num(key)) <= 0)
     return 0;
@@ -356,7 +262,43 @@ int COMPOSITE_KEY_bits(COMPOSITE_KEY * key) {
   int key_num = 0;  
   int total_bits = 0;
 
-  if (!key || !key->items) return -1;
+  if (!key) return -1;
+
+  if ((key_num = COMPOSITE_KEY_num(key)) <= 0)
+    return 0;
+
+  DEBUG("Composite Key (key) => %p", key);
+
+  for (i = 0; i < key_num; i++) {
+
+    const EVP_PKEY * single_key;
+
+    if ((single_key = COMPOSITE_KEY_get0(key, i)) == NULL) {
+      DEBUG("ERROR: Cannot get key %d", i);
+      return 0;
+    }
+
+    DEBUG("DEBUG: Individual Key [%d] is at [0x%p]", i, single_key);
+
+    total_bits += EVP_PKEY_bits(single_key);
+
+    DEBUG("DEBUG: [%d] Current Total BITS is [%d]",
+     i, total_bits);
+  }
+
+  DEBUG("Returning Total Bits: %d", total_bits);
+
+  return total_bits;
+}
+
+int COMPOSITE_KEY_security_bits(COMPOSITE_KEY * key) {
+
+  int i = 0;
+  int key_num = 0;  
+  int sec_bits = INT_MAX;
+  int component_sec_bits = INT_MAX;
+
+  if (!key) return -1;
 
   if ((key_num = COMPOSITE_KEY_num(key)) <= 0)
     return 0;
@@ -370,20 +312,15 @@ int COMPOSITE_KEY_bits(COMPOSITE_KEY * key) {
       return 0;
     }
 
-    total_bits += EVP_PKEY_size(single_key);
+    component_sec_bits = EVP_PKEY_security_bits(single_key);
+    if (sec_bits >= component_sec_bits) sec_bits = component_sec_bits;
 
-    DEBUG("DEBUG: [%d] Current Total BITS is [%d]",
-     i, total_bits);
+    DEBUG("DEBUG: [%d] Current Security BITS is [%d]", i, sec_bits);
   }
 
-  DEBUG("Returning Total Size: %d", total_bits);
+  DEBUG("Returning Security Bits: %d", sec_bits);
 
-  return total_bits;
-}
-
-int COMPOSITE_KEY_security_bits(COMPOSITE_KEY * sec_bits) {
-  DEBUG("Not Implemented, yet.");
-  return 0;
+  return sec_bits;
 }
 
 // =========================
@@ -393,10 +330,10 @@ int COMPOSITE_KEY_security_bits(COMPOSITE_KEY * sec_bits) {
 // Implemented
 static int init(EVP_PKEY_CTX *ctx) {
   
-  COMPOSITE_PKEY_CTX *comp_ctx = NULL;
+  COMPOSITE_CTX *comp_ctx = NULL;
 
   // Allocate Memory
-  if ((comp_ctx = COMPOSITE_PKEY_CTX_new_null()) == NULL)
+  if ((comp_ctx = COMPOSITE_CTX_new_null()) == NULL)
     return 0;
 
   // Assigns the algorithm-specific data
@@ -417,14 +354,60 @@ static int init(EVP_PKEY_CTX *ctx) {
 // Not Implemented
 static int copy(EVP_PKEY_CTX * dst,
                 EVP_PKEY_CTX * src) {
-  DEBUG("Not implemented, yet.");
-  return 0;
+
+  COMPOSITE_CTX * src_comp_ctx = src->data;
+  COMPOSITE_CTX * dst_comp_ctx = COMPOSITE_CTX_new_null();
+
+  if (!dst_comp_ctx) return 0;
+
+  dst->data = dst_comp_ctx;
+
+  for (int i = 0; i < COMPOSITE_CTX_num(src_comp_ctx); i++) {
+
+    COMPOSITE_CTX_ITEM * src_it = NULL;
+    COMPOSITE_CTX_ITEM * dst_it = NULL;
+
+    EVP_PKEY_CTX * tmp_pkey_ctx = NULL;
+    EVP_MD_CTX * tmp_md_ctx = NULL;
+
+    DEBUG("copying component #%d ...", i);
+
+    if ((src_it = COMPOSITE_CTX_get_item(src_comp_ctx, i)) == NULL) {
+      DEBUG("ERROR: Cannot retrieve element #%d", i);
+      return 0;
+    }
+
+    if ((dst_it = COMPOSITE_CTX_ITEM_new_null()) == NULL) {
+      DEBUG("ERROR: Cannot allocate memory for copying CTX for component #%d", i);
+      return 0;
+    }
+
+    if (!COMPOSITE_CTX_get0(src_comp_ctx, i, &tmp_pkey_ctx, &tmp_md_ctx)) {
+      DEBUG("ERROR: Cannot get the data from the source CTX item for component #%d", i);
+      return 0;
+    }
+
+    // Duplicate the PKEY context
+    if (tmp_pkey_ctx) dst_it->pkey_ctx = EVP_PKEY_CTX_dup(tmp_pkey_ctx);
+
+    // Duplicate the MD context
+    if (tmp_md_ctx) dst_it->md_ctx = EVP_MD_CTX_dup(tmp_md_ctx);
+
+    // Push the item contex to the composite CTX
+    if (!COMPOSITE_CTX_push_item(dst_comp_ctx, dst_it)) {
+      DEBUG("ERROR: Cannot push component #%d in the destination CTX", i);
+      return 0;
+    }
+  }
+
+  DEBUG("All Done.");
+  return 1;
 }
 
 // Implemented
 static void cleanup(EVP_PKEY_CTX * ctx) {
 
-  COMPOSITE_PKEY_CTX * comp_ctx = NULL;
+  COMPOSITE_CTX * comp_ctx = NULL;
     // Composite Context
 
   // Input Check
@@ -432,7 +415,7 @@ static void cleanup(EVP_PKEY_CTX * ctx) {
 
   // Retrieves the internal context
   if ((comp_ctx = ctx->data) != NULL)
-    COMPOSITE_PKEY_CTX_free(comp_ctx);
+    COMPOSITE_CTX_free(comp_ctx);
 
   DEBUG("cleanup completed successfully.");
 
@@ -464,7 +447,8 @@ static int keygen(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey) {
   int alg_nid = 0;
     // NID for the algorithm
 
-  COMPOSITE_PKEY_CTX * comp_ctx = NULL;
+  COMPOSITE_CTX * comp_ctx = NULL;
+  COMPOSITE_KEY * key = NULL;
 
   // Input Validation
   if (!ctx || !ctx->data || !pkey) return 0;
@@ -477,16 +461,40 @@ static int keygen(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey) {
   }
 
   // Checks we have the right data and items
-  if (!(comp_ctx = ctx->data) || !(comp_ctx->key) || 
-        sk_COMPOSITE_KEY_ITEM_num(comp_ctx->key->items) <= 0) {
+  if (!(comp_ctx = ctx->data) || 
+        COMPOSITE_CTX_num(comp_ctx) <= 0) {
 
     // No components present in the key
     DEBUG("ERROR: No Keys Are Present in the SEQUENCE!");
     return 0;
   }
+
+  // Allocates the Composite Key
+  if ((key = COMPOSITE_KEY_new_null()) == NULL) {
+    DEBUG("Memory allocation error");
+    return 0;
+  }
+
+  for (int i = 0; i < COMPOSITE_CTX_num(comp_ctx); i++ ) {
+
+    EVP_PKEY * tmp_pkey = NULL;
+      // Pointer to the single component's key
+
+    DEBUG("Adding Key #%d", i);
+
+    if (!COMPOSITE_CTX_pkey_get0(comp_ctx, &tmp_pkey, i) ||
+         tmp_pkey == NULL) {
+      DEBUG("ERROR: Cannot add PKEY to Composite Key component #%d", i);
+      COMPOSITE_KEY_free(key);
+    }
+
+    // Adds the key in the key stack
+    COMPOSITE_KEY_push(key, tmp_pkey);
+  }
+
   // NOTE: To Get the Structure, use EVP_PKEY_get0(EVP_PKEY *k)
   // NOTE: To Add the Key Structure, use EVP_PKEY_assign()
-  EVP_PKEY_assign_COMPOSITE(pkey, comp_ctx->key);
+  EVP_PKEY_assign_COMPOSITE(pkey, key);
   // EVP_PKEY_assign(pkey, -1, comp_ctx->key);
 
   DEBUG("KeyGen Completed Successfully.");
@@ -497,22 +505,19 @@ static int keygen(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey) {
 // Implemented
 static int sign_init(EVP_PKEY_CTX *ctx) {
 
-  COMPOSITE_KEY * comp_key = NULL;
-    // Pointer to inner structure
+  COMPOSITE_CTX * comp_ctx = ctx->data;
+    // Algorithm specific context
 
-  if (!ctx || !ctx->pkey ||
-     ((comp_key = EVP_PKEY_get0(ctx->pkey)) == NULL)) {
-    return 0;
-  }
+  if (!comp_ctx) return 0;
 
-  for (int i = 0; i < COMPOSITE_KEY_num(comp_key); i++) {
+  for (int i = 0; i < COMPOSITE_CTX_num(comp_ctx); i++) {
 
-    COMPOSITE_KEY_ITEM * it = NULL;
+    COMPOSITE_CTX_ITEM * it = NULL;
       // Pointer to Internal Structure that
       // contains also the EVP_PKEY_CTX for
       // the component of the key
 
-    if ((it = COMPOSITE_KEY_ITEM_get0(comp_key, i)) == NULL)
+    if ((it = COMPOSITE_CTX_get_item(comp_ctx, i)) == NULL)
       return 0;
 
     if (!it->pkey_ctx) {
@@ -520,19 +525,13 @@ static int sign_init(EVP_PKEY_CTX *ctx) {
       // int the newly generated one associated to the
       // single component
       it->pkey_ctx = EVP_PKEY_CTX_new_id(
-                          it->pkey->type,
+                          ctx->pmeth->pkey_id,
                           ctx->engine);
-
-      // Copies the basic data
-      it->pkey_ctx->operation = ctx->operation;
-      it->pkey_ctx->app_data  = ctx->app_data;
     }
 
-    // Attaches the EVP_PKEY if not there
-    if (NULL == it->pkey_ctx->pkey) {
-      it->pkey_ctx->pkey = it->pkey;
-      EVP_PKEY_up_ref(it->pkey);
-    }
+    // Copies the basic data
+    it->pkey_ctx->operation = ctx->operation;
+    it->pkey_ctx->app_data  = ctx->app_data;
 
     // Initialize the Signature for the component
     if (1 != EVP_PKEY_sign_init(it->pkey_ctx)) {
@@ -555,6 +554,12 @@ static int sign(EVP_PKEY_CTX        * ctx,
   COMPOSITE_KEY * comp_key = EVP_PKEY_get0(ctx && ctx->pkey ? ctx->pkey : NULL);
     // Pointer to inner key structure
 
+  COMPOSITE_CTX * comp_ctx = ctx->data;
+    // Pointer to algorithm specific CTX
+
+  const int signature_size = EVP_PKEY_size(ctx->pkey);
+    // The total signature size
+
   STACK_OF(ASN1_TYPE) *sk = NULL;
     // Stack of ASN1_OCTET_STRINGs
 
@@ -567,9 +572,6 @@ static int sign(EVP_PKEY_CTX        * ctx,
 
   int comp_key_num = 0;
     // Number of components
-
-  const int signature_size = EVP_PKEY_size(ctx->pkey);
-    // The total signature size
 
   unsigned char * buff = NULL;
   unsigned char * pnt  = NULL;
@@ -602,22 +604,19 @@ static int sign(EVP_PKEY_CTX        * ctx,
 
   for (int i = 0; i < comp_key_num; i++) {
 
-    COMPOSITE_KEY_ITEM * it = COMPOSITE_KEY_ITEM_get0(comp_key, i);
-      // Pointer to the single ITEM in the Composite Key
+    EVP_PKEY_CTX * pkey_ctx = NULL;
 
-    EVP_PKEY_CTX * tmp_pkey_ctx = NULL;
-      // Pointer to the EVP_PKEY from the CTX
+    EVP_MD_CTX * md_ctx = NULL;
 
-    // Gets the EVP_PKEY from the sequence
-    if ((tmp_pkey_ctx = it->pkey_ctx) == NULL) {
-      DEBUG("ERROR: Cannot retrieve the PKEY CTX of the %d-th component of the key", i);
-      goto err;
+    if (!COMPOSITE_CTX_get0(comp_ctx, i, &pkey_ctx, &md_ctx)) {
+      DEBUG("ERROR: Cannot get %d-th component from CTX", i);
+      return 0;
     }
 
     DEBUG("Determining Signature Size for Component #%d", i);
 
     // Let's get the size of the single signature
-    if (EVP_PKEY_sign(tmp_pkey_ctx, NULL, (size_t *)&buff_len, tbs, tbslen) != 1) {
+    if (EVP_PKEY_sign(pkey_ctx, NULL, (size_t *)&buff_len, tbs, tbslen) != 1) {
       DEBUG("ERROR: Null Size reported from Key Component #%d", i);
       goto err;
     }
@@ -631,7 +630,7 @@ static int sign(EVP_PKEY_CTX        * ctx,
     DEBUG("PNT = %p, BUFF = %p", pnt, buff);
 
     // Generates the single signature
-    if (EVP_PKEY_sign(tmp_pkey_ctx, pnt, (size_t *)&buff_len, tbs, tbslen) != 1) {
+    if (EVP_PKEY_sign(pkey_ctx, pnt, (size_t *)&buff_len, tbs, tbslen) != 1) {
       DEBUG("ERROR: Component #%d cannot generate signatures", i);
       goto err;
     }
@@ -714,10 +713,10 @@ static int verify_init(EVP_PKEY_CTX *ctx) {
 
 // Implemented
 static int verify(EVP_PKEY_CTX        * ctx,
-                                 const unsigned char * sig,
-                                 size_t                siglen,
-                                 const unsigned char * tbs,
-                                 size_t                tbslen) {
+                  const unsigned char * sig,
+                  size_t                siglen,
+                  const unsigned char * tbs,
+                  size_t                tbslen) {
   DEBUG("Not implemented, yet.");
   return 0;
 }
@@ -741,68 +740,80 @@ static int verify_recover(EVP_PKEY_CTX        * ctx,
 // Implemented
 static int signctx_init(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx) {
 
-  COMPOSITE_KEY * comp_key = NULL;
+  return 1;
+
+
+  COMPOSITE_CTX * comp_ctx = ctx->data;
+    // Algorithm specific CTX
+
+  COMPOSITE_KEY * comp_key = EVP_PKEY_get0(ctx->pkey);
     // Pointer to inner structure
 
-  if (!ctx || !ctx->pkey ||
-     ((comp_key = EVP_PKEY_get0(ctx->pkey)) == NULL)) {
-    return 0;
-  }
+  // Input Checks
+  if (!ctx || !comp_ctx) return 0;
 
-  if (!EVP_PKEY_sign_init(ctx)) {
+  DEBUG("SIGNCTX INIT");
+
+  DEBUG("ctx = %p, mctx->pctx = %p, mctx->pctx->data = %p",
+    ctx, mctx->pctx, mctx->pctx->data);
+
+  DEBUG("COMPOSITE CTX num = %d", COMPOSITE_CTX_num(comp_ctx));
+  DEBUG("COMPOSITE KEY num = %d", COMPOSITE_KEY_num(comp_key));
+
+  DEBUG("COMPOSITE CTX num = %d", COMPOSITE_CTX_num(comp_ctx));
+
+  // Status Check
+  if (COMPOSITE_CTX_num(comp_ctx) != COMPOSITE_KEY_num(comp_key))
+
+  /*
+  if (!EVP_PKEY_sign_init(pkey_ctx)) {
     DEBUG("ERROR: Cannot initialize the Multi-Key PKEY CTX");
     return 0;
   }
+  */
 
   for (int i = 0; i < COMPOSITE_KEY_num(comp_key); i++) {
 
-    COMPOSITE_KEY_ITEM * it = NULL;
-      // Pointer to Internal Structure that
-      // contains also the EVP_PKEY_CTX for
-      // the component of the key
+    EVP_MD_CTX * md_ctx = NULL;
+      // Digest context
 
-    if ((it = COMPOSITE_KEY_ITEM_get0(comp_key, i)) == NULL)
+    EVP_PKEY_CTX * pkey_ctx = NULL;
+      // Component specific CTX
+
+    EVP_PKEY * pkey = COMPOSITE_KEY_get0(comp_key, i);
+      // Component specific key
+
+    // Let' check we have the right data
+    if (!COMPOSITE_CTX_get0(comp_ctx, i, &pkey_ctx, &md_ctx)) {
+      DEBUG("ERROR: Cannot Retrieve CTX for component #%d", i);
       return 0;
-
-    if (!it->pkey_ctx) {
-      // Copies some details from the main EVP_PKEY_CTX
-      // int the newly generated one associated to the
-      // single component
-
-      it->pkey_ctx = EVP_PKEY_CTX_new_id(
-                          it->pkey->type,
-                          ctx->engine);
-
-      // Copies the basic data
-      it->pkey_ctx->operation = ctx->operation;
-      it->pkey_ctx->app_data  = ctx->app_data;
     }
+
+    // Checks on the pointers
+    if (!pkey || !pkey_ctx) return 0;
 
     if (mctx) {
       
-      if (!it->md_ctx && 
-          ((it->md_ctx = EVP_MD_CTX_new()) == NULL)) {
+      if (!md_ctx && 
+          ((md_ctx = EVP_MD_CTX_new()) == NULL)) {
         DEBUG("ERROR: Cannot Allocate the MD CTX for Component #%d", i);
       }
 
       // Initializes the EVP_MD (alias to EVP_MD_reset)
-      EVP_MD_CTX_init(it->md_ctx);
+      EVP_MD_CTX_init(md_ctx);
 
       // Copy the MD to the specific component
       if ((mctx->digest != NULL) && 
-          (EVP_MD_CTX_copy(it->md_ctx, mctx) <= 0)) {
+          (EVP_MD_CTX_copy(md_ctx, mctx) <= 0)) {
         // This is ok, it fails when the mctx->digest is NULL
         DEBUG("ERROR: Cannot copy the MD CTX for Component #%d", i);
-        EVP_MD_CTX_free(it->md_ctx);
-        it->md_ctx = NULL;
         return 0;
       }
     }
 
-    // Use the Component's signctx_init specific callback
-    if (it->pkey_ctx->pmeth->signctx_init != NULL &&
-        (it->pkey_ctx->pmeth->signctx_init(it->pkey_ctx, 
-                                           it->md_ctx) != 1)) {
+    if (pkey_ctx->pmeth->signctx_init != NULL &&
+        (pkey_ctx->pmeth->signctx_init(pkey_ctx, 
+                                       md_ctx) != 1)) {
       DEBUG("ERROR: Cannot Initialize Signature for Component #%d", i);
       return 0;
     }
@@ -871,15 +882,26 @@ static int derive(EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen) {
 // Implemented
 static int ctrl(EVP_PKEY_CTX *ctx, int type, int key_id, void *value) {
 
-  COMPOSITE_PKEY_CTX *comp_ctx = ctx->data;
+  // NOTE: The passed ctx does not have the PKEY
+  // associated with it. This means we cannot act
+  // on the key
+
+  COMPOSITE_CTX *comp_ctx = ctx->data;
     // Pointer to the Composite CTX
 
   EVP_PKEY * pkey = NULL;
     // Pointer to the PKEY to add/del
 
+  DEBUG("PKEY METHOD - CTRL -> CTX = %p, CTX->DATA", ctx, ctx->data);
+
   // Input checks
-  if (!comp_ctx || !comp_ctx->key)
-    return 0;
+  if (!comp_ctx) return 0;
+
+  DEBUG("comp_ctx = %p, ctx->pkey = %p",
+    comp_ctx, ctx->pkey);
+
+  DEBUG("Setting (ctrl) (type = %d) (key_id = %d, value = %p)",
+        type, key_id, value);
 
   switch (type) {
 
@@ -889,31 +911,23 @@ static int ctrl(EVP_PKEY_CTX *ctx, int type, int key_id, void *value) {
 
     case EVP_PKEY_CTRL_MD: {
 
-      const EVP_PKEY * aKey = NULL;
-        // Pointer for signle component keys
-
-      if (key_id < 0) return 0;
-
-      if (value == NULL) {
-        DEBUG("Setting NULL digest, returning OK.");
-        return 1;
-      }
-
-      if ((aKey = COMPOSITE_KEY_get0(comp_ctx->key, key_id)) == NULL) {
-        DEBUG("ERROR: Cannot Get Key %d from the stack (%p)", key_id, comp_ctx->key);
-        return 0;
-      }
-
-      DEBUG("MISSING CODE: Setting the MD for the selected key!");
+      DEBUG("No action to set an MD for composite!");
 
     } break;
 
 
     case EVP_PKEY_OP_TYPE_SIG: {
-      DEBUG("Got EVP sign operation");
+      DEBUG("Got EVP sign operation - missing code, returning ok");
     } break;
 
     case EVP_PKEY_CTRL_PEER_KEY:
+    case EVP_PKEY_CTRL_SET_DIGEST_SIZE:
+    case EVP_PKEY_CTRL_SET_MAC_KEY:
+    case EVP_PKEY_CTRL_SET_IV: {
+      DEBUG("ERROR: Non Supported CTRL");
+      return 0;
+    } break;
+
     case EVP_PKEY_CTRL_PKCS7_ENCRYPT:
     case EVP_PKEY_CTRL_PKCS7_DECRYPT:
     case EVP_PKEY_CTRL_PKCS7_SIGN:
@@ -921,14 +935,12 @@ static int ctrl(EVP_PKEY_CTX *ctx, int type, int key_id, void *value) {
     case EVP_PKEY_CTRL_CMS_ENCRYPT:
     case EVP_PKEY_CTRL_CMS_DECRYPT:
     case EVP_PKEY_CTRL_CMS_SIGN:
-    case EVP_PKEY_CTRL_SET_DIGEST_SIZE:
-    case EVP_PKEY_CTRL_SET_MAC_KEY:
-    case EVP_PKEY_CTRL_SET_IV:
     case EVP_PKEY_CTRL_CIPHER: {
       
-      DEBUG("Unsupported CTRL: type = %d, param_1 = %d, param_2 = %p",
+      DEBUG("Nothing to do here CTRL: type = %d, param_1 = %d, param_2 = %p",
         type, key_id, value);
-      return 0;
+
+      return 1;
 
     } break;
 
@@ -938,31 +950,26 @@ static int ctrl(EVP_PKEY_CTX *ctx, int type, int key_id, void *value) {
 
     case EVP_PKEY_CTRL_COMPOSITE_ADD: {
 
-      DEBUG("ADD a Key: %d -> %p", key_id, value);
-      
-      if ((pkey = (EVP_PKEY *)value) == NULL) {
-        DEBUG("ERROR: Missing PKEY");
+      DEBUG("ADDING KEY to Composite");
+
+      if (!COMPOSITE_CTX_add_pkey(comp_ctx, (EVP_PKEY *)value, key_id)) {
+        DEBUG("ERROR: Cannot add component (type %d) to composite key", pkey->type);
         return 0;
       }
 
-      if (!COMPOSITE_KEY_add(comp_ctx->key, pkey, key_id)) {
-        DEBUG("ERROR: Cannot ADD the new key");
-        return 0;
-      }
+      DEBUG("ADD a Key: %d -> %p", key_id, value);
+
+      // All Done
+      return 1;
 
     } break;
 
     case EVP_PKEY_CTRL_COMPOSITE_PUSH: {
 
-      DEBUG("PUSH a Key: %p", value);
+      DEBUG("PUSHING KEY to Composite");
 
-      if ((pkey = (EVP_PKEY *)value) == NULL) {
-        DEBUG("ERROR: Missing PKEY");
-        return 0;
-      }
-
-      if (!COMPOSITE_KEY_push(comp_ctx->key, pkey)) {
-        DEBUG("ERROR: Cannot PUSH the new key");
+      if (!COMPOSITE_CTX_push_pkey(comp_ctx, (EVP_PKEY *)value)) {
+        DEBUG("ERROR: Cannot push component (type %d) to composite key", pkey->type);
         return 0;
       }
 
@@ -972,43 +979,33 @@ static int ctrl(EVP_PKEY_CTX *ctx, int type, int key_id, void *value) {
 
       DEBUG("DEL a Key: %d", key_id);
 
-      // Delete the specific item from the stack
-      if (!COMPOSITE_KEY_del(comp_ctx->key, key_id)) {
-        DEBUG("ERROR: Cannot delete key %d", key_id);
+      if (key_id <= 0 || key_id >= COMPOSITE_CTX_num(comp_ctx))
         return 0;
-      }
+
+      // Delete the specific item from the stack
+      COMPOSITE_CTX_del(comp_ctx, key_id);
 
     } break;
 
     case EVP_PKEY_CTRL_COMPOSITE_POP: {
 
       DEBUG("POP a Key");
-      
-      // POP the specific item and get the EVP_PKEY
-      if ((pkey = COMPOSITE_KEY_pop(comp_ctx->key)) == NULL) {
-        DEBUG("ERROR: Cannot POP a key from the composite");
-        return 0;
-      }
 
-      // Free the EVP_PKEY memory
-      EVP_PKEY_free(pkey);
+      COMPOSITE_CTX_pop_free(comp_ctx);
 
     } break;
 
     case EVP_PKEY_CTRL_COMPOSITE_CLEAR: {
+
       DEBUG("Clearing ALL Keys: %d -> %p", key_id, value);
 
       // Clears all components from the key
-      if (!COMPOSITE_KEY_clear(comp_ctx->key)) {
-        DEBUG("ERROR: Cannot delete key %d", key_id);
-        return 0;
-      }
+      COMPOSITE_CTX_clear(comp_ctx);
 
     } break;
 
-
     default: {
-      DEBUG("Unrecognized CTRL (type = %d)", type);
+      DEBUG("PKEY METHOD: Unrecognized CTRL (type = %d)", type);
       return 0;
     }
 
@@ -1029,9 +1026,171 @@ static int ctrl_str(EVP_PKEY_CTX *ctx, const char *type, const char *value) {
 // ===================
 
 // Implemented
-static int digestsign(EVP_MD_CTX *ctx, unsigned char *sig, size_t *siglen, const unsigned char *tbs, size_t tbslen) {
-  DEBUG("Not implemented, yet.");
+static int digestsign(EVP_MD_CTX          * ctx,
+                      unsigned char       * sig,
+                      size_t              * siglen,
+                      const unsigned char * tbs,
+                      size_t                tbslen) {
+  
+  DEBUG("Not Implemented, yet.");
+
+  // return sign(ctx, sig, siglen, tbs, tbslen);
+
   return 0;
+  /*
+  COMPOSITE_KEY * comp_key = EVP_PKEY_get0(ctx && ctx->pkey ? ctx->pkey : NULL);
+    // Pointer to inner key structure
+
+  COMPOSITE_CTX * comp_ctx = ctx->data;
+    // Pointer to algorithm specific CTX
+
+  const int signature_size = EVP_PKEY_size(ctx->pkey);
+    // The total signature size
+
+  STACK_OF(ASN1_TYPE) *sk = NULL;
+    // Stack of ASN1_OCTET_STRINGs
+
+  ASN1_OCTET_STRING * oct_string = NULL;
+    // Output Signature to be added
+    // to the stack of signatures
+
+  ASN1_TYPE * aType = NULL;
+    // ASN1 generic wrapper
+
+  int comp_key_num = 0;
+    // Number of components
+
+  unsigned char * buff = NULL;
+  unsigned char * pnt  = NULL;
+  int buff_len =  0;
+    // Temp Pointers
+
+  int total_size = 0;
+    // Total Signature Size
+
+  if ((comp_key == NULL) || 
+      ((comp_key_num = COMPOSITE_KEY_num(comp_key)) <= 0)) {
+    DEBUG("ERROR: Cannot get the Composite key inner structure");
+    return 0;
+  }
+
+  if (sig == NULL) {
+    *siglen = (size_t)signature_size;
+    return 1;
+  }
+
+  if ((size_t)signature_size > (*siglen)) {
+    DEBUG("ERROR: Buffer is too small");
+    return 0;
+  }
+
+  if ((sk = sk_ASN1_TYPE_new_null()) == NULL) {
+    DEBUG("ERROR: Memory Allocation");
+    return 0;
+  }
+
+  for (int i = 0; i < comp_key_num; i++) {
+
+    EVP_PKEY_CTX * pkey_ctx = NULL;
+
+    EVP_MD_CTX * md_ctx = NULL;
+
+    if (!COMPOSITE_CTX_get0(comp_ctx, i, &pkey_ctx, &md_ctx)) {
+      DEBUG("ERROR: Cannot get %d-th component from CTX", i);
+      return 0;
+    }
+
+    DEBUG("Determining Signature Size for Component #%d", i);
+
+    // Let's get the size of the single signature
+    if (EVP_PKEY_sign(pkey_ctx, NULL, (size_t *)&buff_len, tbs, tbslen) != 1) {
+      DEBUG("ERROR: Null Size reported from Key Component #%d", i);
+      goto err;
+    }
+
+    // Allocate the buffer for the single signature
+    if ((pnt = buff = OPENSSL_malloc(buff_len)) == NULL) {
+      DEBUG("ERROR: Memory Allocation");
+      goto err;
+    }
+
+    DEBUG("PNT = %p, BUFF = %p", pnt, buff);
+
+    // Generates the single signature
+    if (EVP_PKEY_sign(pkey_ctx, pnt, (size_t *)&buff_len, tbs, tbslen) != 1) {
+      DEBUG("ERROR: Component #%d cannot generate signatures", i);
+      goto err;
+    }
+
+    DEBUG("PNT = %p, BUFF = %p", pnt, buff);
+
+    // Updates the overall real size
+    total_size += buff_len;
+
+    DEBUG("Generated Signature for Component #%d Successfully (size: %d)", i, buff_len);
+    DEBUG("Signature Total Size [So Far] ... %d", total_size);
+
+    if ((oct_string = ASN1_OCTET_STRING_new()) == NULL) {
+      DEBUG("ERROR: Memory Allocation");
+      goto err;
+    }
+
+    // This sets the internal pointers
+    ASN1_STRING_set0(oct_string, buff, buff_len);
+
+    // Resets the pointer and length after ownership transfer
+    buff = NULL; buff_len = 0;
+
+    // Let's now generate the ASN1_TYPE and add it to the stack
+    if ((aType = ASN1_TYPE_new()) == NULL) {
+      DEBUG("ERROR: Memory Allocation");
+      goto err;
+    }
+
+    // Transfer Ownership to the aType structure
+    ASN1_TYPE_set(aType, V_ASN1_OCTET_STRING, oct_string);
+    oct_string = NULL;
+
+    // Adds the component to the stack
+    if (!sk_ASN1_TYPE_push(sk, aType)) {
+      DEBUG("ERROR: Cannot push the new Type");
+      goto err;
+    }
+
+    // Transfers ownership
+    aType = NULL;
+  }
+
+  if ((buff_len = i2d_ASN1_SEQUENCE_ANY(sk, &buff)) <= 0) {
+    DEBUG("ERROR: Cannot ASN1 encode the Overall Composite Key");
+    goto err;
+  }
+
+  // Reporting the total size
+  DEBUG("Total Signature Size: %d (reported: %d)", total_size, EVP_PKEY_size(ctx->pkey))
+
+  // Free the stack's memory
+  while ((aType = sk_ASN1_TYPE_pop(sk)) == NULL) {
+    ASN1_TYPE_free(aType);
+  }
+  sk_ASN1_TYPE_free(sk);
+  sk = NULL;
+
+  // Sets the output buffer
+  sig = buff;
+  *siglen = buff_len;
+
+  // All Done
+  return 1;
+
+err:
+
+  DEBUG("ERROR: Signing failed");
+
+  // Here we need to cleanup the memory
+
+  return 0;
+  */
 }
 
 // Implemented
@@ -1058,10 +1217,10 @@ static int param_check(EVP_PKEY *pkey) {
   return 0;
 }
 
-// Implemented
+// Not Implemented
 static int digest_custom(EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx) {
-  DEBUG("Not implemented, yet.");
-  return 0;
+  DEBUG("Not implemented, yet. Returning Ok anyway.");
+  return 1;
 }
 
 /* END: composite_pmenth.c */

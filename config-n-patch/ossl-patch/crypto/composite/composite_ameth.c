@@ -68,8 +68,7 @@ STACK_OF(EVP_PKEY) * COMPOSITE_KEY_sk_get1(COMPOSITE_KEY * key) {
     // Return Pointer
 
   // Input checks
-  if (!key || !key->items)
-    return NULL;
+  if (!key) return NULL;
 
   // Allocates the Stack
   if ((ret_sk = sk_EVP_PKEY_new_null()) == NULL)
@@ -164,16 +163,16 @@ static int pub_decode(EVP_PKEY *pk, X509_PUBKEY *pub) {
     }
 
     // Checks we got the right type
-    if ((aType->type != V_ASN1_OCTET_STRING) ||
-        (aType->value.octet_string == NULL)) {
+    if ((aType->type != V_ASN1_SEQUENCE) ||
+        (aType->value.sequence == NULL)) {
       DEBUG("ERROR: Multi-Key Encoding Format Error (expecting OCTET STRINGs) #%d", i);
       goto err;
     }
 
     // Sets the Pointers so that our original ones
     // are not moved (can cause memory issues)
-    aOctetStr.data = aType->value.octet_string->data;
-    aOctetStr.length = aType->value.octet_string->length;
+    aOctetStr.data = aType->value.sequence->data;
+    aOctetStr.length = aType->value.sequence->length;
 
     // Retrieve the EVP_PKEY from the ASN1_TYPE
     if ((tmp_pub = d2i_X509_PUBKEY(NULL, 
@@ -197,6 +196,9 @@ static int pub_decode(EVP_PKEY *pk, X509_PUBKEY *pub) {
       DEBUG("ERROR: Cannot Add Component Key #%d to Multi-Key (Composite)", i);
       goto err;
     }
+
+    // Adds a reference for mem management
+    // EVP_PKEY_up_ref(tmp_pkey);
   }
 
 
@@ -344,7 +346,7 @@ static int pub_encode(X509_PUBKEY *pub, const EVP_PKEY *pk) {
     }
 
     // Transfer Ownership to the aType structure
-    ASN1_TYPE_set(aType, V_ASN1_OCTET_STRING, oct_string);
+    ASN1_TYPE_set(aType, V_ASN1_SEQUENCE, oct_string);
     oct_string = NULL;
 
     // Adds the component to the stack
@@ -554,16 +556,16 @@ static int priv_decode(EVP_PKEY *pk, const PKCS8_PRIV_KEY_INFO *p8) {
     }
 
     // Checks we got the right type
-    if ((aType->type != V_ASN1_OCTET_STRING) ||
-        (aType->value.octet_string == NULL)) {
+    if ((aType->type != V_ASN1_SEQUENCE) ||
+        (aType->value.sequence == NULL)) {
       DEBUG("ERROR: Multi-Key Encoding Format Error (expecting OCTET STRINGs) #%d", i);
       goto err;
     }
 
     // Sets the Pointers so that our original ones
     // are not moved (can cause memory issues)
-    aOctetStr.data = aType->value.octet_string->data;
-    aOctetStr.length = aType->value.octet_string->length;
+    aOctetStr.data = aType->value.sequence->data;
+    aOctetStr.length = aType->value.sequence->length;
 
     // Retrieve the EVP_PKEY from the ASN1_TYPE
     if ((tmp_pkey = d2i_AutoPrivateKey(NULL, 
@@ -586,10 +588,15 @@ static int priv_decode(EVP_PKEY *pk, const PKCS8_PRIV_KEY_INFO *p8) {
     ASN1_TYPE_free(aType);
   } sk_ASN1_TYPE_free(sk);
 
+  DEBUG("Assigning comp_key to pk");
+
   if (!EVP_PKEY_assign_COMPOSITE(pk, comp_key)) {
     DEBUG("ERROR: Cannot assign Composite Key to EVP_PKEY!");
     goto err;
   }
+
+  DEBUG("Key Decoded Successfully: pk = %p, comp_key = %p, pk->pkey->ptr = %p",
+    pk, comp_key, pk->pkey.ptr);
 
   return 1;
 
@@ -649,6 +656,15 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
   int buff_len = 0;
     // Temporary Storage for ASN1 data
 
+  unsigned char * tot_buff = NULL;
+  unsigned char * tmp_pnt = NULL;
+  int tot_buff_len = 0;
+    // Temporary Storage for ASN1 data
+
+  // ASN1_STRING seq;
+    // Final Storage for ASN1 data
+
+
   // Input Checking
   if (!p8 || !pk) return 0;
 
@@ -678,11 +694,38 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
       goto err;
     }
 
+    // NOTE: buff must be set to NULL, otherwise OpenSSL
+    // thinks there is an already allocated buffer and
+    // writes to it and moves the pointer at the end
+    buff = NULL;
+
     // Generates the DER encoding of the component
     if ((buff_len = i2d_PKCS8_PRIV_KEY_INFO(tmp_pkey_info, &buff)) <= 0) {
       DEBUG("ERROR: Cannot ASN1 encode the [%d] component of the key", i);
       goto err;
     }
+
+    /*
+    DEBUG("Adding Buff (0x%p - len %d) - Current Total Len is %d", 
+      buff, buff_len, tot_buff_len);
+
+    if ((tmp_pnt = OPENSSL_malloc(tot_buff_len + buff_len)) == NULL) {
+      DEBUG("ERROR: Memory allocation");
+      if (buff) OPENSSL_free(buff);
+      if (tot_buff) OPENSSL_free(tot_buff);
+      return 0;
+    }
+
+    memcpy(tmp_pnt, tot_buff, tot_buff_len);
+    memcpy(tmp_pnt + tot_buff_len, buff, buff_len);
+
+    tot_buff = tmp_pnt;
+    tot_buff_len += buff_len;
+
+    DEBUG("Freeing buff -> %p", buff);
+    OPENSSL_free(buff);
+
+    DEBUG("Expanded buffer: New Total size is %d", tot_buff_len);
 
     // Let's free the P8 structure
     PKCS8_PRIV_KEY_INFO_free(tmp_pkey_info);
@@ -700,6 +743,35 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
     // Resets the pointer and length after ownership transfer
     buff = NULL; buff_len = 0;
 
+    if ((aType = ASN1_TYPE_new_null() == NULL)
+      goto err;
+
+    // Transfer Ownership to the aType structure
+    ASN1_TYPE_set(aType, V_ASN1_SEQUENCE, oct_string);
+    oct_string = NULL;
+
+    // Adds the component to the stack
+    if (!sk_ASN1_TYPE_push(sk, aType)) {
+      DEBUG("ERROR: Cannot push the new Type");
+      goto err;
+    }
+    */
+
+    if ((oct_string = ASN1_OCTET_STRING_new()) == NULL) {
+      DEBUG("ERROR: Memory Allocation");
+      goto err;
+    }
+
+    // This sets and transfer ownership
+    ASN1_STRING_set0(oct_string, buff, buff_len);
+
+    // Resets the pointer and length after ownership transfer
+    buff = NULL; buff_len = 0;
+
+    // Let's free the X509_PUBKEY structure
+    PKCS8_PRIV_KEY_INFO_free(tmp_pkey_info);
+    tmp_pkey_info = NULL;
+
     // Let's now generate the ASN1_TYPE and add it to the stack
     if ((aType = ASN1_TYPE_new()) == NULL) {
       DEBUG("ERROR: Memory Allocation");
@@ -707,7 +779,7 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
     }
 
     // Transfer Ownership to the aType structure
-    ASN1_TYPE_set(aType, V_ASN1_OCTET_STRING, oct_string);
+    ASN1_TYPE_set(aType, V_ASN1_SEQUENCE, oct_string);
     oct_string = NULL;
 
     // Adds the component to the stack
@@ -718,6 +790,55 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
 
   }
 
+  /*
+
+  // NOTE: We need to set the 'data' field to be
+  // NULL, otherwise OpenSSL will try to free it
+  seq.data = NULL; seq.length = 0;
+
+  // Sets the value of the string
+  ASN1_STRING_set(&seq, tot_buff, tot_buff_len);
+
+  // ASN1 types are in <openssl/asn1.h>
+  ASN1_TYPE_set(&aType, V_ASN1_SEQUENCE, &seq);
+
+  // OpenSSL requirement
+  buff = NULL;
+
+  // Encodes the sequence
+  if ((buff_len = i2d_ASN1_TYPE(&aType, &buff)) <= 0) {
+    DEBUG("ERROR: Cannot ASN1 encode the Overall Composite Key");
+    goto err;
+  }
+
+  DEBUG("Final Encoded Total Size: %d", buff_len);
+
+  if (seq.data && seq.length) OPENSSL_free(seq.data);
+  seq.data = NULL; seq.length = 0;
+
+  // Sets the value of the string
+  ASN1_STRING_set(&seq, buff, buff_len);
+
+  // Resets the internal so that OpenSSL does
+  // not try to free the memory
+  aType.value.ptr = NULL;
+
+  // ASN1 types are in <openssl/asn1.h>
+  ASN1_TYPE_set(&aType, V_ASN1_SEQUENCE, &seq);
+
+  // OpenSSL requirement
+  buff = NULL;
+
+  // Encodes the sequence
+  if ((buff_len = i2d_ASN1_TYPE(&aType, &buff)) <= 0) {
+    DEBUG("ERROR: Cannot ASN1 encode the Overall Composite Key");
+    goto err;
+  }
+
+  DEBUG("Final Encoded Total Size 2nd Time: %d", buff_len);
+  */
+
+  buff = NULL;
   if ((buff_len = i2d_ASN1_SEQUENCE_ANY(sk, &buff)) <= 0) {
     DEBUG("ERROR: Cannot ASN1 encode the Overall Composite Key");
     goto err;
@@ -731,7 +852,7 @@ static int priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pk) {
   sk = NULL;
 
   if (!PKCS8_pkey_set0(p8, OBJ_nid2obj(pk->ameth->pkey_id), 
-                       0, V_ASN1_UNDEF, NULL, buff, buff_len)) {
+                       0, /* V_ASN1_UNDEF */ V_ASN1_NULL, NULL, buff, buff_len)) {
     DEBUG("ERROR: Cannot set the P8 key contents");
     goto err;
   }
@@ -746,8 +867,7 @@ err:
 
   if (oct_string) ASN1_OCTET_STRING_free(oct_string);
 
-  if (aType) ASN1_TYPE_free(aType);
-
+  /*
   if (sk) {
     while ((aType = sk_ASN1_TYPE_pop(sk)) == NULL) {
       ASN1_TYPE_free(aType);
@@ -755,6 +875,7 @@ err:
     sk_ASN1_TYPE_free(sk);
     sk = NULL;
   }
+  */
 
   return 0;
 
@@ -964,8 +1085,10 @@ static void pkey_free(EVP_PKEY *pk) {
     return;
   }
 
+  DEBUG("ERROR: MUST CHECK THIS LINE -- MEMORY ERROR!");
+  DEBUG("ERROR: When properly running COMPOSITE_KEY_free() we got a memory issue, deferring.");
   // Clears the Key and Frees the memory
-  COMPOSITE_KEY_free(comp_key);
+  // COMPOSITE_KEY_free(comp_key);
 
   // All Done.
   return;
@@ -973,8 +1096,8 @@ static void pkey_free(EVP_PKEY *pk) {
 
 // Implemented
 static int pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2) {
-  /*
 
+  /*
   # define ASN1_PKEY_CTRL_PKCS7_SIGN       0x1
   # define ASN1_PKEY_CTRL_PKCS7_ENCRYPT    0x2
   # define ASN1_PKEY_CTRL_DEFAULT_MD_NID   0x3
@@ -982,6 +1105,8 @@ static int pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2) {
   # define ASN1_PKEY_CTRL_CMS_ENVELOPE     0x7
   # define ASN1_PKEY_CTRL_CMS_RI_TYPE      0x8
   */
+
+  DEBUG("ASN1 METHOD: PKEY CTRL - EVP_PKEY is HERE.");
 
   switch (op) {
 
@@ -1047,11 +1172,14 @@ static int item_verify(EVP_MD_CTX *ctx, const ASN1_ITEM *it, void *asn, X509_ALG
 
 // Implemented
 static int item_sign(EVP_MD_CTX *ctx, const ASN1_ITEM *it, void *asn, X509_ALGOR *alg1, X509_ALGOR *alg2, ASN1_BIT_STRING *sig) {
-    // X509_ALGOR_set0(alg1, OBJ_nid2obj(NID_ALG), V_ASN1_UNDEF, NULL);
-    // if (alg2 != NULL)
-    //    X509_ALGOR_set0(alg2, OBJ_nid2obj(NID_ALG), V_ASN1_UNDEF, NULL);
+
+    X509_ALGOR_set0(alg1, OBJ_nid2obj(NID_composite), V_ASN1_UNDEF, NULL);
+
+    if (alg2 != NULL)
+       X509_ALGOR_set0(alg2, OBJ_nid2obj(NID_composite), V_ASN1_UNDEF, NULL);
+
     // Algorithm identifier set: carry on as normal
-    // return 3;    
+    return 3;    
 
   DEBUG("Not implemented, yet.");
   return 0;
