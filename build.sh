@@ -54,7 +54,7 @@ if [ ! -d "openssl" -o "$1" = "openssl" ] ; then
 	cp config/libpki-generate-template.yml openssl/oqs-template/generate.yml
 
 	# Execute the build
-	cd openssl && ./config --prefix=/opt/libpki-oqs --shared
+	cd openssl && ./config --prefix=/opt/libpki-oqs -d -shared -no-asm -g3 -ggdb -gdwarf-4 -fno-inline -O0 -fno-omit-frame-pointer
 
 	# Rebuilds the Objects database
 	python3 oqs-template/generate.py
@@ -74,7 +74,7 @@ if [ ! -d "libpki" -o "$1" = "libpki" ] ; then
 	fi
 
 	# Execute the build
-	cd libpki && ./configure --prefix=/opt/libpki-oqs --disable-ldap
+	cd libpki && ./configure --prefix=/opt/libpki-oqs --disable-ldap --enable-composite --enable-debug
 
 	make && sudo make install
 
